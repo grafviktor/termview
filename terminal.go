@@ -42,12 +42,15 @@ type Model struct {
 	emu   *vt.SafeEmulator
 	state *session
 
-	id            int
-	width, height int
-	command       string
-	commandArgs   []string
-	focus         bool
-	stdErr        io.Writer
+	id                int
+	width, height     int
+	command           string
+	commandArgs       []string
+	focus             bool
+	stdErr            io.Writer
+	scrollbackSize    int
+	scrollOffset      int
+	lastScrollbackLen int
 }
 
 func New(opts ...Option) (Model, error) {
@@ -86,6 +89,10 @@ func New(opts ...Option) (Model, error) {
 	}
 
 	emu := vt.NewSafeEmulator(m.width, m.height)
+	if m.scrollbackSize > 0 {
+		emu.SetScrollbackSize(m.scrollbackSize)
+	}
+
 	state := &session{exited: make(chan struct{})}
 	state.showCursor.Store(true)
 	emu.SetCallbacks(vt.Callbacks{
@@ -197,6 +204,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 
+		m.followScrollback()
 		return m, m.ptyToTerminalView()
 
 	case ClosedMsg:
@@ -216,7 +224,36 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Page keys scroll the viewport instead of going to the shell, except
+		// on the alternate screen where pagers and editors need them.
+		if m.emu != nil && !m.emu.IsAltScreen() {
+			switch msg.String() {
+			case "pgup":
+				m.ScrollUp(m.height)
+				return m, nil
+			case "pgdown":
+				m.ScrollDown(m.height)
+				return m, nil
+			}
+		}
+
+		// Typing returns to the live screen, like a regular terminal does.
+		m.scrollTo(0)
 		m.emu.SendKey(vt.KeyPressEvent(msg))
+		return m, nil
+
+	case tea.MouseWheelMsg:
+		if !m.Focused() {
+			return m, nil
+		}
+
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			m.ScrollUp(mouseScrollStep)
+		case tea.MouseWheelDown:
+			m.ScrollDown(mouseScrollStep)
+		}
+
 		return m, nil
 
 	case tea.PasteMsg:
@@ -228,6 +265,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 
+		m.scrollTo(0)
 		m.emu.Paste(msg.Content)
 		return m, nil
 	}
@@ -273,6 +311,7 @@ func (m *Model) resize(width, height int) {
 	m.width, m.height = width, height
 	m.emu.Resize(width, height)
 	_ = m.pty.Resize(width, height)
+	m.followScrollback()
 }
 
 func (m Model) getDefaultSize() (width, height int) {
@@ -287,6 +326,10 @@ func (m Model) getDefaultSize() (width, height int) {
 func (m Model) View() string {
 	if m.emu == nil {
 		return ""
+	}
+
+	if m.scrollOffset > 0 {
+		return m.viewScrollback()
 	}
 
 	return m.emu.Render()
@@ -319,8 +362,14 @@ func (m Model) Cursor() *tea.Cursor {
 		return nil
 	}
 
+	// Scrolling up pushes the live screen down and eventually off the viewport.
 	pos := m.emu.CursorPosition()
-	return tea.NewCursor(pos.X, pos.Y)
+	y := pos.Y + m.scrollOffset
+	if y >= m.height {
+		return nil
+	}
+
+	return tea.NewCursor(pos.X, y)
 }
 
 func (m Model) ID() int {
