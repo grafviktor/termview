@@ -9,55 +9,12 @@ import (
 // mouseScrollStep is the number of lines a single mouse wheel tick scrolls.
 const mouseScrollStep = 3
 
-// ScrollUp moves the viewport towards the oldest line of the scrollback.
-func (m *Model) ScrollUp(lines int) {
+func (m *Model) scrollUp(lines int) {
 	m.scrollTo(m.scrollOffset + lines)
 }
 
-// ScrollDown moves the viewport back towards the live screen.
-func (m *Model) ScrollDown(lines int) {
+func (m *Model) scrollDown(lines int) {
 	m.scrollTo(m.scrollOffset - lines)
-}
-
-// ScrollToTop shows the oldest line kept in the scrollback.
-func (m *Model) ScrollToTop() {
-	m.scrollTo(m.maxScrollOffset())
-}
-
-// ScrollToBottom returns to the live screen.
-func (m *Model) ScrollToBottom() {
-	m.scrollTo(0)
-}
-
-// ScrollOffset reports how many lines the viewport sits above the live screen.
-// Zero means the live screen is shown.
-func (m Model) ScrollOffset() int {
-	return m.scrollOffset
-}
-
-// AtBottom reports whether the live screen is shown.
-func (m Model) AtBottom() bool {
-	return m.scrollOffset == 0
-}
-
-// ScrollbackLen returns the number of lines currently kept in the scrollback.
-func (m Model) ScrollbackLen() int {
-	if m.emu == nil {
-		return 0
-	}
-	return m.emu.ScrollbackLen()
-}
-
-// ClearScrollback drops every line kept in the scrollback and returns to the
-// live screen.
-func (m *Model) ClearScrollback() {
-	if m.emu == nil {
-		return
-	}
-
-	m.emu.ClearScrollback()
-	m.scrollOffset = 0
-	m.lastScrollbackLen = 0
 }
 
 func (m *Model) scrollTo(offset int) {
@@ -68,7 +25,10 @@ func (m *Model) scrollTo(offset int) {
 // keeps scrolling. scrollOffset is measured from the bottom of the scrollback,
 // so each new line would otherwise push the view toward newer content.
 func (m *Model) followScrollback() {
-	sbLen := m.ScrollbackLen()
+	sbLen := 0
+	if m.emu != nil {
+		sbLen = m.emu.ScrollbackLen()
+	}
 	if m.scrollOffset > 0 {
 		m.scrollTo(m.scrollOffset + (sbLen - m.lastScrollbackLen))
 	}

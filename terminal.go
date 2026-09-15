@@ -240,16 +240,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if m.emu != nil && !m.emu.IsAltScreen() {
 			switch msg.String() {
 			case "pgup", "shift+pgup":
-				m.ScrollUp(m.height)
+				m.scrollUp(m.height)
 				return m, nil
 			case "pgdown", "shift+pgdown":
-				m.ScrollDown(m.height)
+				m.scrollDown(m.height)
 				return m, nil
 			case "shift+up":
-				m.ScrollUp(1)
+				m.scrollUp(1)
 				return m, nil
 			case "shift+down":
-				m.ScrollDown(1)
+				m.scrollDown(1)
 				return m, nil
 			}
 		}
@@ -270,10 +270,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if msg.Button == tea.MouseLeft {
 			m.startX, m.startY = msg.X, msg.Y
 			m.endX, m.endY = msg.X, msg.Y
+			m.hasSelection = true
 		}
 	case tea.MouseMotionMsg:
 		if m.hasSelection && msg.Button == tea.MouseLeft {
-			m.hasSelection = true
 			m.endX, m.endY = msg.X, msg.Y
 		}
 	case tea.MouseReleaseMsg:
@@ -293,9 +293,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// That also captures click/drag, so host text selection usually breaks.
 		switch msg.Button {
 		case tea.MouseWheelUp:
-			m.ScrollUp(mouseScrollStep)
+			m.scrollUp(mouseScrollStep)
 		case tea.MouseWheelDown:
-			m.ScrollDown(mouseScrollStep)
+			m.scrollDown(mouseScrollStep)
 		}
 
 		return m, nil

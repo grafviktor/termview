@@ -21,8 +21,6 @@ func TestScrollRendering(t *testing.T) {
 		fmt.Fprintf(m.emu, "line%d\r\n", i)
 	}
 
-	t.Logf("scrollback len: %d", m.ScrollbackLen())
-
 	// Live screen: last 4 lines plus the empty row the cursor sits on.
 	live := m.View()
 	t.Logf("live view:\n%s", live)
@@ -34,12 +32,9 @@ func TestScrollRendering(t *testing.T) {
 	}
 
 	// Scroll up three lines.
-	m.ScrollUp(3)
-	if m.ScrollOffset() != 3 {
-		t.Fatalf("offset = %d, want 3", m.ScrollOffset())
-	}
-	if m.AtBottom() {
-		t.Error("AtBottom() = true after scrolling up")
+	m.scrollUp(3)
+	if m.scrollOffset != 3 {
+		t.Fatalf("offset = %d, want 3", m.scrollOffset)
 	}
 
 	scrolled := m.View()
@@ -57,11 +52,11 @@ func TestScrollRendering(t *testing.T) {
 	}
 
 	// Scrolling to the top clamps at the oldest scrollback line.
-	m.ScrollToTop()
+	m.scrollTo(m.maxScrollOffset())
 	top := m.View()
-	t.Logf("top view (offset %d):\n%s", m.ScrollOffset(), top)
-	if m.ScrollOffset() != m.ScrollbackLen() {
-		t.Errorf("top offset = %d, want %d", m.ScrollOffset(), m.ScrollbackLen())
+	t.Logf("top view (offset %d):\n%s", m.scrollOffset, top)
+	if m.scrollOffset != m.emu.ScrollbackLen() {
+		t.Errorf("top offset = %d, want %d", m.scrollOffset, m.emu.ScrollbackLen())
 	}
 	if !strings.Contains(top, "line1\n") {
 		t.Errorf("top view missing oldest line:\n%s", top)
@@ -71,9 +66,9 @@ func TestScrollRendering(t *testing.T) {
 	}
 
 	// Over-scrolling down clamps back to the live screen.
-	m.ScrollDown(1000)
-	if !m.AtBottom() {
-		t.Errorf("offset = %d, want 0 after scrolling down past the end", m.ScrollOffset())
+	m.scrollDown(1000)
+	if m.scrollOffset != 0 {
+		t.Errorf("offset = %d, want 0 after scrolling down past the end", m.scrollOffset)
 	}
 	if m.View() != live {
 		t.Errorf("returning to the bottom did not restore the live view:\n%s", m.View())
@@ -86,21 +81,21 @@ func TestScrollAnchorsOnNewOutput(t *testing.T) {
 		fmt.Fprintf(m.emu, "line%d\r\n", i)
 	}
 
-	m.ScrollUp(3)
-	m.lastScrollbackLen = m.ScrollbackLen()
+	m.scrollUp(3)
+	m.lastScrollbackLen = m.emu.ScrollbackLen()
 	before := m.View()
 
 	// Simulate the PTY goroutine pushing two more lines into the scrollback.
 	fmt.Fprint(m.emu, "new1\r\nnew2\r\n")
-	growth := m.ScrollbackLen() - m.lastScrollbackLen
+	growth := m.emu.ScrollbackLen() - m.lastScrollbackLen
 
 	m, _ = m.Update(OutputMsg{ID: m.id})
 
 	if got := m.View(); got != before {
 		t.Errorf("view drifted while scrolled up.\nbefore:\n%s\nafter:\n%s", before, got)
 	}
-	if m.ScrollOffset() != 3+growth {
-		t.Errorf("offset = %d, want %d", m.ScrollOffset(), 3+growth)
+	if m.scrollOffset != 3+growth {
+		t.Errorf("offset = %d, want %d", m.scrollOffset, 3+growth)
 	}
 }
 
@@ -111,7 +106,7 @@ func TestKeyPressReturnsToBottom(t *testing.T) {
 	}
 
 	m = m.Focus()
-	m.ScrollUp(3)
+	m.scrollUp(3)
 
 	// SendKey/SendText write into the emulator's response pipe, which blocks
 	// without a reader. In the real model terminalViewToPty drains it into the PTY.
@@ -126,8 +121,8 @@ func TestKeyPressReturnsToBottom(t *testing.T) {
 	}()
 
 	m, _ = m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
-	if !m.AtBottom() {
-		t.Errorf("offset = %d, want 0 after a key press", m.ScrollOffset())
+	if m.scrollOffset != 0 {
+		t.Errorf("offset = %d, want 0 after a key press", m.scrollOffset)
 	}
 }
 
@@ -161,19 +156,19 @@ func TestPageKeysScroll(t *testing.T) {
 	m = m.Focus()
 
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
-	if m.ScrollOffset() != m.Height() {
-		t.Fatalf("offset = %d after pgup, want %d", m.ScrollOffset(), m.Height())
+	if m.scrollOffset != m.Height() {
+		t.Fatalf("offset = %d after pgup, want %d", m.scrollOffset, m.Height())
 	}
 
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
-	if !m.AtBottom() {
-		t.Errorf("offset = %d after pgdown, want 0", m.ScrollOffset())
+	if m.scrollOffset != 0 {
+		t.Errorf("offset = %d after pgdown, want 0", m.scrollOffset)
 	}
 
 	m = m.Blur()
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
-	if !m.AtBottom() {
-		t.Errorf("blurred terminal scrolled to %d", m.ScrollOffset())
+	if m.scrollOffset != 0 {
+		t.Errorf("blurred terminal scrolled to %d", m.scrollOffset)
 	}
 }
 
@@ -185,26 +180,25 @@ func TestMouseWheelScrolls(t *testing.T) {
 	m = m.Focus()
 
 	m, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
-	if m.ScrollOffset() != mouseScrollStep {
-		t.Fatalf("offset = %d after one wheel up, want %d", m.ScrollOffset(), mouseScrollStep)
+	if m.scrollOffset != mouseScrollStep {
+		t.Fatalf("offset = %d after one wheel up, want %d", m.scrollOffset, mouseScrollStep)
 	}
 
 	m, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
-	if !m.AtBottom() {
-		t.Errorf("offset = %d after wheeling back down, want 0", m.ScrollOffset())
+	if m.scrollOffset != 0 {
+		t.Errorf("offset = %d after wheeling back down, want 0", m.scrollOffset)
 	}
 
-	// Shift+wheel is the common "scroll scrollback" gesture.
 	m, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
-	if m.ScrollOffset() != mouseScrollStep {
-		t.Fatalf("offset = %d after shift+wheel up, want %d", m.ScrollOffset(), mouseScrollStep)
+	if m.scrollOffset != mouseScrollStep {
+		t.Fatalf("offset = %d after wheel up, want %d", m.scrollOffset, mouseScrollStep)
 	}
 
 	// An unfocused terminal ignores the wheel.
 	m = m.Blur()
 	m, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
-	if m.ScrollOffset() != mouseScrollStep {
-		t.Errorf("blurred terminal scrolled to %d", m.ScrollOffset())
+	if m.scrollOffset != mouseScrollStep {
+		t.Errorf("blurred terminal scrolled to %d", m.scrollOffset)
 	}
 }
 
@@ -215,7 +209,7 @@ func TestStyledScrollbackLineKeepsColors(t *testing.T) {
 		fmt.Fprintf(m.emu, "line%d\r\n", i)
 	}
 
-	m.ScrollToTop()
+	m.scrollTo(m.maxScrollOffset())
 	top := m.View()
 	if !strings.Contains(top, "red line") {
 		t.Fatalf("top view missing the styled line:\n%q", top)
