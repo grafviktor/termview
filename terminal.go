@@ -234,6 +234,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			case "pgdown":
 				m.ScrollDown(m.height)
 				return m, nil
+			case "shift+up":
+				m.ScrollUp(1)
+				return m, nil
+			case "shift+down":
+				m.ScrollDown(1)
+				return m, nil
 			}
 		}
 
