@@ -239,7 +239,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 		// Typing returns to the live screen, like a regular terminal does.
 		m.scrollTo(0)
-		m.emu.SendKey(vt.KeyPressEvent(msg))
+		// Prefer Text for printable characters (including Shift/CapsLock).
+		// x/vt SendKey only emits printable keys when Mod == 0, so Shift+a
+		// (Code:'a', Text:"A", Mod:Shift) would otherwise produce nothing.
+		if msg.Text != "" {
+			m.emu.SendText(msg.Text)
+		} else {
+			m.emu.SendKey(vt.KeyPressEvent(msg))
+		}
 		return m, nil
 
 	case tea.MouseWheelMsg:

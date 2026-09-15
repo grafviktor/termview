@@ -113,8 +113,8 @@ func TestKeyPressReturnsToBottom(t *testing.T) {
 	m = m.Focus()
 	m.ScrollUp(3)
 
-	// SendKey writes into the emulator's response pipe, which blocks without a
-	// reader. In the real model terminalViewToPty drains it into the PTY.
+	// SendKey/SendText write into the emulator's response pipe, which blocks
+	// without a reader. In the real model terminalViewToPty drains it into the PTY.
 	emu := m.emu
 	go func() {
 		buf := make([]byte, 64)
@@ -128,6 +128,28 @@ func TestKeyPressReturnsToBottom(t *testing.T) {
 	m, _ = m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
 	if !m.AtBottom() {
 		t.Errorf("offset = %d, want 0 after a key press", m.ScrollOffset())
+	}
+}
+
+func TestShiftedPrintableKeyIsSent(t *testing.T) {
+	m := newTestModel(20, 5).Focus()
+	emu := m.emu
+	got := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 64)
+		n, err := emu.Read(buf)
+		if err != nil {
+			got <- ""
+			return
+		}
+		got <- string(buf[:n])
+	}()
+
+	// Kitty/enhanced keyboard protocol reports Shift+a as Code 'a' + Text "A".
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'a', Text: "A", Mod: tea.ModShift})
+
+	if out := <-got; out != "A" {
+		t.Fatalf("pty input = %q, want %q", out, "A")
 	}
 }
 
