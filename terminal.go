@@ -254,6 +254,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Requires the Bubble Tea view to set MouseMode (e.g. CellMotion).
+		// That also captures click/drag, so host text selection usually breaks.
 		switch msg.Button {
 		case tea.MouseWheelUp:
 			m.ScrollUp(mouseScrollStep)

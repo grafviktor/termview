@@ -33,7 +33,9 @@ func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (a app) View() tea.View {
 	v := tea.NewView(a.term.View())
 	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
+	// Do not enable MouseMode: it steals click/drag from the host, so text
+	// selection breaks (Option+drag is not honored in every terminal).
+	// Scroll with PgUp/PgDown, or set MouseModeCellMotion if you prefer wheel.
 	v.Cursor = a.term.Cursor()
 	return v
 }
