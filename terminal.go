@@ -6,9 +6,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync/atomic"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/term"
 	"github.com/charmbracelet/x/vt"
 	"github.com/charmbracelet/x/xpty"
@@ -51,6 +53,11 @@ type Model struct {
 	scrollbackSize    int
 	scrollOffset      int
 	lastScrollbackLen int
+
+	// Selection
+	selecting                  bool
+	startX, startY, endX, endY int
+	hasSelection               bool
 }
 
 func New(opts ...Option) (Model, error) {
@@ -224,14 +231,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 
+		if msg.String() == "ctrl+]" {
+			m.selecting = !m.selecting
+		}
+
 		// Page keys scroll the viewport instead of going to the shell, except
 		// on the alternate screen where pagers and editors need them.
 		if m.emu != nil && !m.emu.IsAltScreen() {
 			switch msg.String() {
-			case "pgup":
+			case "pgup", "shift+pgup":
 				m.ScrollUp(m.height)
 				return m, nil
-			case "pgdown":
+			case "pgdown", "shift+pgdown":
 				m.ScrollDown(m.height)
 				return m, nil
 			case "shift+up":
@@ -254,6 +265,24 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.emu.SendKey(vt.KeyPressEvent(msg))
 		}
 		return m, nil
+
+	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft {
+			m.startX, m.startY = msg.X, msg.Y
+			m.endX, m.endY = msg.X, msg.Y
+		}
+	case tea.MouseMotionMsg:
+		if m.hasSelection && msg.Button == tea.MouseLeft {
+			m.hasSelection = true
+			m.endX, m.endY = msg.X, msg.Y
+		}
+	case tea.MouseReleaseMsg:
+		if m.hasSelection && msg.Button == tea.MouseLeft {
+			m.endX, m.endY = msg.X, msg.Y
+			// tea.SetClipboard(selectedText(m))
+		} else {
+			m.hasSelection = false
+		}
 
 	case tea.MouseWheelMsg:
 		if !m.Focused() {
@@ -342,12 +371,65 @@ func (m Model) View() string {
 	if m.emu == nil {
 		return ""
 	}
-
-	if m.scrollOffset > 0 {
-		return m.viewScrollback()
+	if !m.hasSelection {
+		if m.scrollOffset > 0 {
+			return m.viewScrollback()
+		}
+		return m.emu.Render()
 	}
+	return m.viewWithSelection()
+}
 
-	return m.emu.Render()
+func (m Model) viewWithSelection() string {
+	x1, y1, x2, y2 := normalize(m.startX, m.startY, m.endX, m.endY)
+	lines := make([]string, 0, m.height)
+	for y := 0; y < m.height; y++ {
+		line := make(uv.Line, 0, m.width)
+		for x := 0; x < m.width; {
+			cell := m.emu.CellAt(x, y) // or viewportCell if scrolled
+			if cell == nil {
+				line = append(line, uv.EmptyCell)
+				x++
+				continue
+			}
+			c := *cell
+			if c.Width <= 0 {
+				c.Width = 1
+			}
+			if inSelection(x, y, x1, y1, x2, y2) {
+				c.Style.Attrs |= uv.AttrReverse
+			}
+			line = append(line, c)
+			x += c.Width
+		}
+		lines = append(lines, line.Render())
+	}
+	return strings.Join(lines, "\n")
+}
+
+func normalize(sx, sy, ex, ey int) (x1, y1, x2, y2 int) {
+	x1, y1, x2, y2 = sx, sy, ex, ey
+	// If end is above start, or same row but to the left — swap.
+	if y1 > y2 || (y1 == y2 && x1 > x2) {
+		return x2, y2, x1, y1
+	}
+	return
+}
+
+func inSelection(x, y, x1, y1, x2, y2 int) bool {
+	if y < y1 || y > y2 {
+		return false
+	}
+	if y1 == y2 {
+		return x >= x1 && x <= x2
+	}
+	if y == y1 {
+		return x >= x1
+	}
+	if y == y2 {
+		return x <= x2
+	}
+	return true // full middle lines
 }
 
 func (m Model) Focus() Model {
@@ -443,4 +525,8 @@ func (m *Model) markClosed() {
 
 func (m Model) Closed() bool {
 	return m.state != nil && m.state.closed.Load()
+}
+
+func (m Model) Selecting() bool {
+	return m.selecting
 }
