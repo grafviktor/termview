@@ -194,10 +194,16 @@ func TestMouseWheelScrolls(t *testing.T) {
 		t.Errorf("offset = %d after wheeling back down, want 0", m.ScrollOffset())
 	}
 
+	// Shift+wheel is the common "scroll scrollback" gesture.
+	m, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	if m.ScrollOffset() != mouseScrollStep {
+		t.Fatalf("offset = %d after shift+wheel up, want %d", m.ScrollOffset(), mouseScrollStep)
+	}
+
 	// An unfocused terminal ignores the wheel.
 	m = m.Blur()
 	m, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
-	if !m.AtBottom() {
+	if m.ScrollOffset() != mouseScrollStep {
 		t.Errorf("blurred terminal scrolled to %d", m.ScrollOffset())
 	}
 }

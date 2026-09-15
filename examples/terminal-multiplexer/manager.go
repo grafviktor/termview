@@ -137,6 +137,7 @@ func (m Manager) View() tea.View {
 	}
 
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	v.Cursor = cursor
 	return v
 }
