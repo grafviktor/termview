@@ -6,11 +6,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strings"
 	"sync/atomic"
 
 	tea "charm.land/bubbletea/v2"
-	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/term"
 	"github.com/charmbracelet/x/vt"
 	"github.com/charmbracelet/x/xpty"
@@ -70,7 +68,6 @@ func New(opts ...Option) (Model, error) {
 		w, h := m.getDefaultSize()
 		m.width, m.height = w, h
 	}
-
 	if m.command == "" {
 		m.command = getShellPath()
 	}
@@ -85,11 +82,9 @@ func New(opts ...Option) (Model, error) {
 	if err != nil {
 		return m, err
 	}
-
 	if err := pty.Start(cmd); err != nil {
 		return m, err
 	}
-
 	if up, ok := pty.(*xpty.UnixPty); ok {
 		_ = up.Slave().Close()
 	}
@@ -162,7 +157,6 @@ func (m Model) terminalViewToPty() {
 		if n > 0 {
 			_, _ = m.pty.Write(buf[:n])
 		}
-
 		if err != nil {
 			return
 		}
@@ -173,11 +167,11 @@ func (m Model) ptyToTerminalView() tea.Cmd {
 	return func() tea.Msg {
 		buf := make([]byte, 4096)
 		n, err := m.pty.Read(buf)
+
 		if n > 0 {
 			_, _ = m.emu.Write(buf[:n])
 			return OutputMsg{ID: m.id}
 		}
-
 		if err != nil {
 			// If there was an error we block and wait the proess to exit.
 			<-m.state.exited
@@ -200,19 +194,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.ptyToTerminalView()
-
 	case OutputMsg:
 		if m.id != msg.ID {
 			return m, nil
 		}
-
 		if m.Closed() {
 			return m, nil
 		}
 
 		m.followScrollback()
 		return m, m.ptyToTerminalView()
-
 	case ClosedMsg:
 		if m.id != msg.ID {
 			return m, nil
@@ -220,47 +211,73 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 		m.markClosed()
 		return m, nil
-
 	case tea.KeyPressMsg:
+		return m.handleKeyPressMsg(msg)
+	case tea.MouseMsg:
+		return m.handleMouseMsg(msg)
+	case tea.PasteMsg:
 		if !m.Focused() {
 			return m, nil
 		}
-
 		if m.Closed() {
 			return m, nil
 		}
 
-		// Page keys scroll the viewport instead of going to the shell, except
-		// on the alternate screen where pagers and editors need them.
-		if m.emu != nil && !m.emu.IsAltScreen() {
-			switch msg.String() {
-			case "pgup", "shift+pgup":
-				m.scrollUp(m.height)
-				return m, nil
-			case "pgdown", "shift+pgdown":
-				m.scrollDown(m.height)
-				return m, nil
-			case "shift+up":
-				m.scrollUp(1)
-				return m, nil
-			case "shift+down":
-				m.scrollDown(1)
-				return m, nil
-			}
-		}
-
-		// Typing returns to the live screen, like a regular terminal does.
 		m.scrollTo(0)
-		// Prefer Text for printable characters (including Shift/CapsLock).
-		// x/vt SendKey only emits printable keys when Mod == 0, so Shift+a
-		// (Code:'a', Text:"A", Mod:Shift) would otherwise produce nothing.
-		if msg.Text != "" {
-			m.emu.SendText(msg.Text)
-		} else {
-			m.emu.SendKey(vt.KeyPressEvent(msg))
-		}
+		m.emu.Paste(msg.Content)
 		return m, nil
+	}
 
+	return m, nil
+}
+
+func (m Model) handleKeyPressMsg(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	if !m.Focused() {
+		return m, nil
+	}
+	if m.Closed() {
+		return m, nil
+	}
+
+	// Page keys scroll the viewport instead of going to the shell, except
+	// on the alternate screen where pagers and editors need them.
+	if m.emu != nil && !m.emu.IsAltScreen() {
+		switch msg.String() {
+		case "pgup", "shift+pgup":
+			m.scrollUp(m.height)
+			return m, nil
+		case "pgdown", "shift+pgdown":
+			m.scrollDown(m.height)
+			return m, nil
+		case "shift+up":
+			m.scrollUp(1)
+			return m, nil
+		case "shift+down":
+			m.scrollDown(1)
+			return m, nil
+		}
+	}
+
+	// Typing returns to the live screen, like a regular terminal does.
+	m.scrollTo(0)
+	// Prefer Text for printable characters (including Shift/CapsLock).
+	// x/vt SendKey only emits printable keys when Mod == 0, so Shift+a
+	// (Code:'a', Text:"A", Mod:Shift) would otherwise produce nothing.
+	if msg.Text != "" {
+		m.emu.SendText(msg.Text)
+	} else {
+		m.emu.SendKey(vt.KeyPressEvent(msg))
+	}
+	return m, nil
+}
+
+func (m Model) handleMouseMsg(msg tea.MouseMsg) (Model, tea.Cmd) {
+	if !m.Focused() {
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	switch msg := msg.(type) {
 	case tea.MouseClickMsg:
 		if msg.Button == tea.MouseLeft {
 			m.startX, m.startY = msg.X, msg.Y
@@ -272,18 +289,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.endX, m.endY = msg.X, msg.Y
 		}
 	case tea.MouseReleaseMsg:
-		var cmd tea.Cmd
 		if m.hasSelection() && msg.Button == tea.MouseLeft {
 			m.endX, m.endY = msg.X, msg.Y
 			cmd = tea.SetClipboard(m.selectedText())
 		}
 		m.isSelecting = false
-		return m, cmd
 	case tea.MouseWheelMsg:
-		if !m.Focused() {
-			return m, nil
-		}
-
 		// Requires the Bubble Tea view to set MouseMode (e.g. CellMotion).
 		// That also captures click/drag, so host text selection usually breaks.
 		switch msg.Button {
@@ -292,24 +303,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		case tea.MouseWheelDown:
 			m.scrollDown(mouseScrollStep)
 		}
-
-		return m, nil
-
-	case tea.PasteMsg:
-		if !m.Focused() {
-			return m, nil
-		}
-
-		if m.Closed() {
-			return m, nil
-		}
-
-		m.scrollTo(0)
-		m.emu.Paste(msg.Content)
-		return m, nil
 	}
 
-	return m, nil
+	return m, cmd
 }
 
 func (m *Model) SetWidth(width int) {
@@ -334,15 +330,12 @@ func (m *Model) resize(width, height int) {
 	if m.emu == nil || m.pty == nil {
 		return
 	}
-
 	if m.Closed() {
 		return
 	}
-
 	if width < minWidth {
 		width = minWidth
 	}
-
 	if height < minHeight {
 		height = minHeight
 	}
@@ -373,108 +366,6 @@ func (m Model) View() string {
 		return m.viewScrollback()
 	}
 	return m.emu.Render()
-}
-
-func (m Model) hasSelection() bool {
-	if !m.isSelecting {
-		return false
-	}
-
-	return m.startX != m.endX || m.startY != m.endY
-}
-
-// viewScrollback renders the viewport while scrolled up. The top rows come from
-// the scrollback and the remaining ones from the top of the live screen.
-func (m Model) viewScrollback() string {
-	sbLen := m.emu.ScrollbackLen()
-	// The shell can wipe the scrollback while we are scrolled up.
-	start := sbLen - min(m.scrollOffset, sbLen)
-
-	lines := make([]string, 0, m.height)
-	for i := start; i < sbLen && len(lines) < m.height; i++ {
-		lines = append(lines, m.scrollbackLine(i).Render())
-	}
-
-	for _, line := range strings.Split(m.emu.Render(), "\n") {
-		if len(lines) >= m.height {
-			break
-		}
-		lines = append(lines, line)
-	}
-
-	return strings.Join(lines, "\n")
-}
-
-func (m Model) viewWithSelection() string {
-	x1, y1, x2, y2 := normalize(m.startX, m.startY, m.endX, m.endY)
-	lines := make([]string, 0, m.height)
-	for y := 0; y < m.height; y++ {
-		line := make(uv.Line, 0, m.width)
-		for x := 0; x < m.width; {
-			cell := m.viewportCell(x, y)
-			if cell == nil {
-				line = append(line, uv.EmptyCell)
-				x++
-				continue
-			}
-			c := *cell
-			if c.Width <= 0 {
-				c.Width = 1
-			}
-			if inSelection(x, y, x1, y1, x2, y2) {
-				c.Style.Attrs |= uv.AttrReverse
-			}
-			line = append(line, c)
-			x += c.Width
-		}
-		lines = append(lines, line.Render())
-	}
-	return strings.Join(lines, "\n")
-}
-
-func (m Model) viewportCell(x, y int) *uv.Cell {
-	if m.emu == nil || x < 0 || y < 0 || x >= m.width || y >= m.height {
-		return nil
-	}
-	if m.scrollOffset == 0 {
-		return m.emu.CellAt(x, y)
-	}
-
-	sbLen := m.emu.ScrollbackLen()
-	start := sbLen - min(m.scrollOffset, sbLen)
-	sbRows := sbLen - start
-	if y < sbRows {
-		return m.emu.ScrollbackCellAt(x, start+y)
-	}
-	return m.emu.CellAt(x, y-sbRows)
-}
-
-func normalize(sx, sy, ex, ey int) (x1, y1, x2, y2 int) {
-	x1, y1, x2, y2 = sx, sy, ex, ey
-
-	if y1 > y2 {
-		return x2, y2, x1, y1
-	}
-	if y1 == y2 && x1 > x2 {
-		return x2, y2, x1, y1
-	}
-	return x1, y1, x2, y2
-}
-
-func inSelection(x, y, x1, y1, x2, y2 int) bool {
-	if y < y1 || y > y2 {
-		return false
-	}
-	if y1 == y2 {
-		return x >= x1 && x <= x2
-	}
-	if y == y1 {
-		return x >= x1
-	}
-	if y == y2 {
-		return x <= x2
-	}
-	return true // full middle lines
 }
 
 func (m Model) Focus() Model {
@@ -535,7 +426,6 @@ func (m *Model) Close() {
 	if m.Closed() {
 		return
 	}
-
 	if m.cmd != nil && m.cmd.Process != nil {
 		_ = m.cmd.Process.Kill()
 		if m.state != nil {
@@ -556,11 +446,9 @@ func (m *Model) markClosed() {
 	if m.Closed() {
 		return
 	}
-
 	if m.pty != nil {
 		_ = m.pty.Close()
 	}
-
 	if m.state != nil {
 		m.state.closed.Store(true)
 	}
@@ -568,30 +456,4 @@ func (m *Model) markClosed() {
 
 func (m Model) Closed() bool {
 	return m.state != nil && m.state.closed.Load()
-}
-
-func (m Model) selectedText() string {
-	x1, y1, x2, y2 := normalize(m.startX, m.startY, m.endX, m.endY)
-	lines := []string{}
-	for y := 0; y < m.height; y++ {
-		selectedLine := false
-		var str strings.Builder
-		for x := 0; x < m.width; {
-			cell := m.viewportCell(x, y)
-			if cell == nil {
-				// If the cell is nil, we've reached the end of the line.
-				// That happems only when we search for cells in the scrollback buffer.
-				break
-			}
-			if inSelection(x, y, x1, y1, x2, y2) {
-				str.WriteString(cell.Content)
-				selectedLine = true
-			}
-			x += cell.Width
-		}
-		if selectedLine {
-			lines = append(lines, strings.TrimRight(str.String(), " "))
-		}
-	}
-	return strings.Join(lines, "\n")
 }

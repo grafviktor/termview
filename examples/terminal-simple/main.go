@@ -33,12 +33,6 @@ func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (a app) View() tea.View {
 	v := tea.NewView(a.term.View())
 	v.AltScreen = true
-	// if a.term.Selecting() {
-	// 	v.MouseMode = tea.MouseModeNone
-	// } else {
-	// 	v.MouseMode = tea.MouseModeAllMotion
-	// }
-	// v.MouseMode = tea.MouseModeNone
 	v.MouseMode = tea.MouseModeAllMotion
 	v.Cursor = a.term.Cursor()
 	return v
