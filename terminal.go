@@ -55,9 +55,8 @@ type Model struct {
 	lastScrollbackLen int
 
 	// Selection
-	selecting                  bool
+	isSelecting                bool
 	startX, startY, endX, endY int
-	hasSelection               bool
 }
 
 func New(opts ...Option) (Model, error) {
@@ -231,10 +230,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 
-		if msg.String() == "ctrl+]" {
-			m.selecting = !m.selecting
-		}
-
 		// Page keys scroll the viewport instead of going to the shell, except
 		// on the alternate screen where pagers and editors need them.
 		if m.emu != nil && !m.emu.IsAltScreen() {
@@ -270,20 +265,20 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if msg.Button == tea.MouseLeft {
 			m.startX, m.startY = msg.X, msg.Y
 			m.endX, m.endY = msg.X, msg.Y
-			m.hasSelection = true
+			m.isSelecting = true
 		}
 	case tea.MouseMotionMsg:
-		if m.hasSelection && msg.Button == tea.MouseLeft {
+		if m.isSelecting && msg.Button == tea.MouseLeft {
 			m.endX, m.endY = msg.X, msg.Y
 		}
 	case tea.MouseReleaseMsg:
-		if m.hasSelection && msg.Button == tea.MouseLeft {
+		var cmd tea.Cmd
+		if m.hasSelection() && msg.Button == tea.MouseLeft {
 			m.endX, m.endY = msg.X, msg.Y
-			// tea.SetClipboard(selectedText(m))
-		} else {
-			m.hasSelection = false
+			cmd = tea.SetClipboard(m.selectedText())
 		}
-
+		m.isSelecting = false
+		return m, cmd
 	case tea.MouseWheelMsg:
 		if !m.Focused() {
 			return m, nil
@@ -371,13 +366,43 @@ func (m Model) View() string {
 	if m.emu == nil {
 		return ""
 	}
-	if !m.hasSelection {
-		if m.scrollOffset > 0 {
-			return m.viewScrollback()
-		}
-		return m.emu.Render()
+	if m.hasSelection() {
+		return m.viewWithSelection()
 	}
-	return m.viewWithSelection()
+	if m.scrollOffset > 0 {
+		return m.viewScrollback()
+	}
+	return m.emu.Render()
+}
+
+func (m Model) hasSelection() bool {
+	if !m.isSelecting {
+		return false
+	}
+
+	return m.startX != m.endX || m.startY != m.endY
+}
+
+// viewScrollback renders the viewport while scrolled up. The top rows come from
+// the scrollback and the remaining ones from the top of the live screen.
+func (m Model) viewScrollback() string {
+	sbLen := m.emu.ScrollbackLen()
+	// The shell can wipe the scrollback while we are scrolled up.
+	start := sbLen - min(m.scrollOffset, sbLen)
+
+	lines := make([]string, 0, m.height)
+	for i := start; i < sbLen && len(lines) < m.height; i++ {
+		lines = append(lines, m.scrollbackLine(i).Render())
+	}
+
+	for _, line := range strings.Split(m.emu.Render(), "\n") {
+		if len(lines) >= m.height {
+			break
+		}
+		lines = append(lines, line)
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) viewWithSelection() string {
@@ -386,7 +411,7 @@ func (m Model) viewWithSelection() string {
 	for y := 0; y < m.height; y++ {
 		line := make(uv.Line, 0, m.width)
 		for x := 0; x < m.width; {
-			cell := m.emu.CellAt(x, y) // or viewportCell if scrolled
+			cell := m.viewportCell(x, y)
 			if cell == nil {
 				line = append(line, uv.EmptyCell)
 				x++
@@ -407,13 +432,33 @@ func (m Model) viewWithSelection() string {
 	return strings.Join(lines, "\n")
 }
 
+func (m Model) viewportCell(x, y int) *uv.Cell {
+	if m.emu == nil || x < 0 || y < 0 || x >= m.width || y >= m.height {
+		return nil
+	}
+	if m.scrollOffset == 0 {
+		return m.emu.CellAt(x, y)
+	}
+
+	sbLen := m.emu.ScrollbackLen()
+	start := sbLen - min(m.scrollOffset, sbLen)
+	sbRows := sbLen - start
+	if y < sbRows {
+		return m.emu.ScrollbackCellAt(x, start+y)
+	}
+	return m.emu.CellAt(x, y-sbRows)
+}
+
 func normalize(sx, sy, ex, ey int) (x1, y1, x2, y2 int) {
 	x1, y1, x2, y2 = sx, sy, ex, ey
-	// If end is above start, or same row but to the left — swap.
-	if y1 > y2 || (y1 == y2 && x1 > x2) {
+
+	if y1 > y2 {
 		return x2, y2, x1, y1
 	}
-	return
+	if y1 == y2 && x1 > x2 {
+		return x2, y2, x1, y1
+	}
+	return x1, y1, x2, y2
 }
 
 func inSelection(x, y, x1, y1, x2, y2 int) bool {
@@ -450,11 +495,9 @@ func (m Model) Cursor() *tea.Cursor {
 	if m.Closed() {
 		return nil
 	}
-
 	if !m.Focused() {
 		return nil
 	}
-
 	if m.state == nil || !m.state.showCursor.Load() {
 		return nil
 	}
@@ -527,6 +570,28 @@ func (m Model) Closed() bool {
 	return m.state != nil && m.state.closed.Load()
 }
 
-func (m Model) Selecting() bool {
-	return m.selecting
+func (m Model) selectedText() string {
+	x1, y1, x2, y2 := normalize(m.startX, m.startY, m.endX, m.endY)
+	lines := []string{}
+	for y := 0; y < m.height; y++ {
+		selectedLine := false
+		var str strings.Builder
+		for x := 0; x < m.width; {
+			cell := m.viewportCell(x, y)
+			if cell == nil {
+				// If the cell is nil, we've reached the end of the line.
+				// That happems only when we search for cells in the scrollback buffer.
+				break
+			}
+			if inSelection(x, y, x1, y1, x2, y2) {
+				str.WriteString(cell.Content)
+				selectedLine = true
+			}
+			x += cell.Width
+		}
+		if selectedLine {
+			lines = append(lines, strings.TrimRight(str.String(), " "))
+		}
+	}
+	return strings.Join(lines, "\n")
 }
