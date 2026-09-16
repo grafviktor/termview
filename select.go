@@ -17,17 +17,18 @@ func (m Model) hasSelection() bool {
 	return m.startX != m.endX || m.startY != m.endY
 }
 
-func normalize(left, top, right, bottom int) (int, int, int, int) {
+func normalize(sx, sy, ex, ey int) (x1, y1, x2, y2 int) {
+	x1, y1, x2, y2 = sx, sy, ex, ey
 	// If user selected from bottom to top
-	if top > bottom {
-		return right, bottom, left, top
+	if y1 > y2 {
+		return x2, y2, x1, y1
 	}
 	// If user selected from right to left
-	if top == bottom && left > right {
-		return right, bottom, left, top
+	if y1 == y2 && x1 > x2 {
+		return x2, y2, x1, y1
 	}
 	// Otherwise, return as is
-	return left, top, right, bottom
+	return x1, y1, x2, y2
 }
 
 func inSelection(x, y, left, top, right, bottom int) bool {
