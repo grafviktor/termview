@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"sync/atomic"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/term"
@@ -42,16 +43,17 @@ type Model struct {
 	emu   *vt.SafeEmulator
 	state *session
 
-	id                int
-	width, height     int
-	command           string
-	commandArgs       []string
-	focus             bool
-	stdErr            io.Writer
+	id            int
+	width, height int
+	command       string
+	commandArgs   []string
+	focus         bool
+	stdErr        io.Writer
+	messageTimer  *time.Timer
+	// Scrollback
 	scrollbackSize    int
 	scrollOffset      int
 	lastScrollbackLen int
-
 	// Selection
 	isSelecting                bool
 	startX, startY, endX, endY int
@@ -456,4 +458,16 @@ func (m *Model) markClosed() {
 
 func (m Model) Closed() bool {
 	return m.state != nil && m.state.closed.Load()
+}
+
+func (m Model) displayNotification(text string) tea.Cmd {
+	m.messageTimer.Stop()
+	m.setNotificationMessage(text)
+
+	m.messageTimer = time.NewTimer(2 * time.Second)
+
+	return func() tea.Msg {
+		<-m.messageTimer.C
+		return m.setNotificationMessage("")
+	}
 }
