@@ -214,7 +214,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKeyPressMsg(msg)
 	case tea.MouseMsg:
-		// Only works when mouse motion mode is enabled. See tea.MouseMode.
+		// Only works when mouse motion mode is enabled. See tea.MouseMode
 		return m.handleMouseMsg(msg)
 	case tea.PasteMsg:
 		if !m.Focused() {
@@ -272,6 +272,13 @@ func (m Model) handleKeyPressMsg(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) bufferY(screenY int) int {
+	if m.emu == nil {
+		return screenY
+	}
+	return screenY + m.emu.ScrollbackLen() - m.scrollOffset
+}
+
 func (m Model) handleMouseMsg(msg tea.MouseMsg) (Model, tea.Cmd) {
 	if !m.Focused() {
 		return m, nil
@@ -281,17 +288,17 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.MouseClickMsg:
 		if msg.Button == tea.MouseLeft {
-			m.startX, m.startY = msg.X, msg.Y
-			m.endX, m.endY = msg.X, msg.Y
+			m.startX, m.startY = msg.X, m.bufferY(msg.Y)
+			m.endX, m.endY = msg.X, m.bufferY(msg.Y)
 			m.isSelecting = true
 		}
 	case tea.MouseMotionMsg:
 		if m.isSelecting && msg.Button == tea.MouseLeft {
-			m.endX, m.endY = msg.X, msg.Y
+			m.endX, m.endY = msg.X, m.bufferY(msg.Y)
 		}
 	case tea.MouseReleaseMsg:
 		if m.hasSelection() && msg.Button == tea.MouseLeft {
-			m.endX, m.endY = msg.X, msg.Y
+			m.endX, m.endY = msg.X, m.bufferY(msg.Y)
 			cmd = func() tea.Msg {
 				return TextSelectedMsg{ID: m.id, Text: m.selectedText()}
 			}
@@ -305,6 +312,10 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (Model, tea.Cmd) {
 			m.scrollUp(mouseScrollStep)
 		case tea.MouseWheelDown:
 			m.scrollDown(mouseScrollStep)
+		}
+
+		if m.isSelecting {
+			m.endX, m.endY = msg.X, m.bufferY(msg.Y)
 		}
 	}
 

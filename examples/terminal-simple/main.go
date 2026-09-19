@@ -32,7 +32,7 @@ func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (a app) View() tea.View {
 	v := tea.NewView(a.term.View())
-	v.AltScreen = true
+	v.AltScreen = true // turn to false for debugging.
 	v.MouseMode = tea.MouseModeAllMotion
 	v.Cursor = a.term.Cursor()
 	return v
@@ -49,6 +49,9 @@ func main() {
 	}
 	t = t.Focus()
 
+	f, _ := os.OpenFile("/tmp/tv.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	defer f.Close()
+	log.SetOutput(f)
 	p := tea.NewProgram(app{term: t})
 	if _, err := p.Run(); err != nil {
 		log.Fatal(err)

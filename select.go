@@ -52,41 +52,30 @@ func inSelection(x, y, left, top, right, bottom int) bool {
 	return true
 }
 
-func (m Model) viewportCell(x, y int) *uv.Cell {
-	if m.emu == nil {
+func (m Model) bufferCell(x, bufY int) *uv.Cell {
+	if m.emu == nil || x < 0 || x >= m.width || bufY < 0 {
 		return nil
-	}
-	// If the coordinates are out of bounds, return nil.
-	if x < 0 || y < 0 || x >= m.width || y >= m.height {
-		return nil
-	}
-	if m.scrollOffset == 0 {
-		return m.emu.CellAt(x, y)
 	}
 
 	sbLen := m.emu.ScrollbackLen()
-	start := sbLen - min(m.scrollOffset, sbLen)
-	sbRows := sbLen - start
-	if y < sbRows {
-		return m.emu.ScrollbackCellAt(x, start+y)
+	if bufY < sbLen {
+		return m.emu.ScrollbackCellAt(x, bufY)
 	}
-	return m.emu.CellAt(x, y-sbRows)
+	return m.emu.CellAt(x, bufY-sbLen)
 }
 
 func (m Model) selectedText() string {
 	left, top, right, bottom := normalize(m.startX, m.startY, m.endX, m.endY)
 	lines := []string{}
-	for y := 0; y < m.height; y++ {
+	for bufY := top; bufY <= bottom; bufY++ {
 		selectedLine := false
 		var str strings.Builder
 		for x := 0; x < m.width; {
-			cell := m.viewportCell(x, y)
+			cell := m.bufferCell(x, bufY)
 			if cell == nil {
-				// If the cell is nil, we've reached the end of the line.
-				// That happens only when we search for cells in the scrollback buffer.
 				break
 			}
-			if inSelection(x, y, left, top, right, bottom) {
+			if inSelection(x, bufY, left, top, right, bottom) {
 				str.WriteString(cell.Content)
 				selectedLine = true
 			}
@@ -102,10 +91,12 @@ func (m Model) selectedText() string {
 func (m Model) viewWithSelection() string {
 	left, top, right, bottom := normalize(m.startX, m.startY, m.endX, m.endY)
 	lines := make([]string, 0, m.height)
+	origin := m.emu.ScrollbackLen() - m.scrollOffset
 	for y := 0; y < m.height; y++ {
+		yRelativeToScrollback := origin + y
 		line := make(uv.Line, 0, m.width)
 		for x := 0; x < m.width; {
-			cell := m.viewportCell(x, y)
+			cell := m.bufferCell(x, yRelativeToScrollback)
 			if cell == nil {
 				line = append(line, uv.EmptyCell)
 				x++
@@ -115,7 +106,7 @@ func (m Model) viewWithSelection() string {
 			if c.Width <= 0 {
 				c.Width = 1
 			}
-			if inSelection(x, y, left, top, right, bottom) {
+			if inSelection(x, yRelativeToScrollback, left, top, right, bottom) {
 				c.Style.Attrs |= uv.AttrReverse
 			}
 			line = append(line, c)
