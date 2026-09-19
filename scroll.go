@@ -21,9 +21,6 @@ func (m *Model) scrollTo(offset int) {
 	m.scrollOffset = min(max(offset, 0), m.maxScrollOffset())
 }
 
-// followScrollback keeps the viewport on the same lines while the live screen
-// keeps scrolling. scrollOffset is measured from the bottom of the scrollback,
-// so each new line would otherwise push the view toward newer content.
 func (m *Model) followScrollback() {
 	sbLen := 0
 	if m.emu != nil {
@@ -42,9 +39,6 @@ func (m *Model) followScrollback() {
 	m.lastScrollbackLen = sbLen
 }
 
-// maxScrollOffset is the offset that puts the oldest scrollback line on the
-// first row of the viewport. The alternate screen keeps no scrollback of its
-// own, so full screen apps such as editors and pagers never scroll.
 func (m Model) maxScrollOffset() int {
 	if m.emu == nil || m.emu.IsAltScreen() {
 		return 0
@@ -52,9 +46,6 @@ func (m Model) maxScrollOffset() int {
 	return m.emu.ScrollbackLen()
 }
 
-// scrollbackLine copies the scrollback line at index out of the emulator. The
-// line is read cell by cell because that is the only concurrency-safe way to
-// reach it while the PTY goroutine keeps writing to the emulator.
 func (m Model) scrollbackLine(index int) uv.Line {
 	line := make(uv.Line, 0, m.width)
 	for x := range m.width {
@@ -69,8 +60,6 @@ func (m Model) scrollbackLine(index int) uv.Line {
 	return line
 }
 
-// viewScrollback renders the viewport while scrolled up. The top rows come from
-// the scrollback and the remaining ones from the top of the live screen.
 func (m Model) viewScrollback() string {
 	sbLen := m.emu.ScrollbackLen()
 	// The shell can wipe the scrollback while we are scrolled up.
