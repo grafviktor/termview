@@ -29,8 +29,15 @@ func (m *Model) followScrollback() {
 	if m.emu != nil {
 		sbLen = m.emu.ScrollbackLen()
 	}
+	growth := sbLen - m.lastScrollbackLen
 	if m.scrollOffset > 0 {
-		m.scrollTo(m.scrollOffset + (sbLen - m.lastScrollbackLen))
+		m.scrollTo(m.scrollOffset + growth)
+	}
+	// Scrollback indices shift down when old lines are dropped. Keep an
+	// in-progress selection on the same text.
+	if m.isSelecting && growth < 0 {
+		m.startY = max(m.startY+growth, 0)
+		m.endY = max(m.endY+growth, 0)
 	}
 	m.lastScrollbackLen = sbLen
 }

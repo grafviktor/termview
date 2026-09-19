@@ -55,6 +55,7 @@ type Model struct {
 	// Selection
 	isSelecting                bool
 	startX, startY, endX, endY int
+	pointerX, pointerY         int
 }
 
 func New(opts ...Option) (Model, error) {
@@ -288,16 +289,19 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.MouseClickMsg:
 		if msg.Button == tea.MouseLeft {
+			m.pointerX, m.pointerY = msg.X, msg.Y
 			m.startX, m.startY = msg.X, m.bufferY(msg.Y)
 			m.endX, m.endY = msg.X, m.bufferY(msg.Y)
 			m.isSelecting = true
 		}
 	case tea.MouseMotionMsg:
 		if m.isSelecting && msg.Button == tea.MouseLeft {
+			m.pointerX, m.pointerY = msg.X, msg.Y
 			m.endX, m.endY = msg.X, m.bufferY(msg.Y)
 		}
 	case tea.MouseReleaseMsg:
 		if m.hasSelection() && msg.Button == tea.MouseLeft {
+			m.pointerX, m.pointerY = msg.X, msg.Y
 			m.endX, m.endY = msg.X, m.bufferY(msg.Y)
 			cmd = func() tea.Msg {
 				return TextSelectedMsg{ID: m.id, Text: m.selectedText()}
@@ -315,7 +319,13 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (Model, tea.Cmd) {
 		}
 
 		if m.isSelecting {
-			m.endX, m.endY = msg.X, m.bufferY(msg.Y)
+			x, y := msg.X, msg.Y
+			if x == 0 && y == 0 {
+				x, y = m.pointerX, m.pointerY
+			} else {
+				m.pointerX, m.pointerY = x, y
+			}
+			m.endX, m.endY = x, m.bufferY(y)
 		}
 	}
 

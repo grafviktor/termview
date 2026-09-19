@@ -61,7 +61,12 @@ func (m Model) bufferCell(x, bufY int) *uv.Cell {
 	if bufY < sbLen {
 		return m.emu.ScrollbackCellAt(x, bufY)
 	}
-	return m.emu.CellAt(x, bufY-sbLen)
+
+	screenY := bufY - sbLen
+	if screenY >= m.height {
+		return nil
+	}
+	return m.emu.CellAt(x, screenY)
 }
 
 func (m Model) selectedText() string {
@@ -78,6 +83,10 @@ func (m Model) selectedText() string {
 			if inSelection(x, bufY, left, top, right, bottom) {
 				str.WriteString(cell.Content)
 				selectedLine = true
+			}
+			if cell.Width <= 0 {
+				x++
+				continue
 			}
 			x += cell.Width
 		}
