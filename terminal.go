@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"sync/atomic"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/term"
@@ -49,8 +48,7 @@ type Model struct {
 	commandArgs   []string
 	focus         bool
 	stdErr        io.Writer
-	messageTimer  *time.Timer
-	// Scrollback
+	// Scrollback.
 	scrollbackSize    int
 	scrollOffset      int
 	lastScrollbackLen int
@@ -175,7 +173,7 @@ func (m Model) ptyToTerminalView() tea.Cmd {
 			return OutputMsg{ID: m.id}
 		}
 		if err != nil {
-			// If there was an error we block and wait the proess to exit.
+			// If there was an error we block and wait the process to exit.
 			<-m.state.exited
 			return ClosedMsg{
 				ID:              m.id,
@@ -216,6 +214,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKeyPressMsg(msg)
 	case tea.MouseMsg:
+		// Only works when mouse motion mode is enabled. See tea.MouseMode.
 		return m.handleMouseMsg(msg)
 	case tea.PasteMsg:
 		if !m.Focused() {
@@ -245,10 +244,10 @@ func (m Model) handleKeyPressMsg(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	// on the alternate screen where pagers and editors need them.
 	if m.emu != nil && !m.emu.IsAltScreen() {
 		switch msg.String() {
-		case "pgup", "shift+pgup":
+		case "shift+pgup":
 			m.scrollUp(m.height)
 			return m, nil
-		case "pgdown", "shift+pgdown":
+		case "shift+pgdown":
 			m.scrollDown(m.height)
 			return m, nil
 		case "shift+up":
@@ -293,7 +292,9 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (Model, tea.Cmd) {
 	case tea.MouseReleaseMsg:
 		if m.hasSelection() && msg.Button == tea.MouseLeft {
 			m.endX, m.endY = msg.X, msg.Y
-			cmd = tea.SetClipboard(m.selectedText())
+			cmd = func() tea.Msg {
+				return TextSelectedMsg{ID: m.id, Text: m.selectedText()}
+			}
 		}
 		m.isSelecting = false
 	case tea.MouseWheelMsg:
@@ -458,16 +459,4 @@ func (m *Model) markClosed() {
 
 func (m Model) Closed() bool {
 	return m.state != nil && m.state.closed.Load()
-}
-
-func (m Model) displayNotification(text string) tea.Cmd {
-	m.messageTimer.Stop()
-	m.setNotificationMessage(text)
-
-	m.messageTimer = time.NewTimer(2 * time.Second)
-
-	return func() tea.Msg {
-		<-m.messageTimer.C
-		return m.setNotificationMessage("")
-	}
 }

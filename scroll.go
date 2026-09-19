@@ -45,28 +45,6 @@ func (m Model) maxScrollOffset() int {
 	return m.emu.ScrollbackLen()
 }
 
-// viewScrollback renders the viewport while scrolled up. The top rows come from
-// the scrollback and the remaining ones from the top of the live screen.
-// func (m Model) viewScrollback() string {
-// 	sbLen := m.emu.ScrollbackLen()
-// 	// The shell can wipe the scrollback while we are scrolled up.
-// 	start := sbLen - min(m.scrollOffset, sbLen)
-
-// 	lines := make([]string, 0, m.height)
-// 	for i := start; i < sbLen && len(lines) < m.height; i++ {
-// 		lines = append(lines, m.scrollbackLine(i).Render())
-// 	}
-
-// 	for _, line := range strings.Split(m.emu.Render(), "\n") {
-// 		if len(lines) >= m.height {
-// 			break
-// 		}
-// 		lines = append(lines, line)
-// 	}
-
-// 	return strings.Join(lines, "\n")
-// }
-
 // scrollbackLine copies the scrollback line at index out of the emulator. The
 // line is read cell by cell because that is the only concurrency-safe way to
 // reach it while the PTY goroutine keeps writing to the emulator.
