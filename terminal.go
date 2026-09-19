@@ -48,6 +48,14 @@ type Model struct {
 	commandArgs   []string
 	focus         bool
 	stdErr        io.Writer
+	// Scrollback.
+	scrollbackSize    int
+	scrollOffset      int
+	lastScrollbackLen int
+	// Selection
+	isSelecting                bool
+	startX, startY, endX, endY int
+	pointerX, pointerY         int
 }
 
 func New(opts ...Option) (Model, error) {
@@ -61,7 +69,6 @@ func New(opts ...Option) (Model, error) {
 		w, h := m.getDefaultSize()
 		m.width, m.height = w, h
 	}
-
 	if m.command == "" {
 		m.command = getShellPath()
 	}
@@ -76,16 +83,18 @@ func New(opts ...Option) (Model, error) {
 	if err != nil {
 		return m, err
 	}
-
 	if err := pty.Start(cmd); err != nil {
 		return m, err
 	}
-
 	if up, ok := pty.(*xpty.UnixPty); ok {
 		_ = up.Slave().Close()
 	}
 
 	emu := vt.NewSafeEmulator(m.width, m.height)
+	if m.scrollbackSize > 0 {
+		emu.SetScrollbackSize(m.scrollbackSize)
+	}
+
 	state := &session{exited: make(chan struct{})}
 	state.showCursor.Store(true)
 	emu.SetCallbacks(vt.Callbacks{
@@ -149,7 +158,6 @@ func (m Model) terminalViewToPty() {
 		if n > 0 {
 			_, _ = m.pty.Write(buf[:n])
 		}
-
 		if err != nil {
 			return
 		}
@@ -160,13 +168,13 @@ func (m Model) ptyToTerminalView() tea.Cmd {
 	return func() tea.Msg {
 		buf := make([]byte, 4096)
 		n, err := m.pty.Read(buf)
+
 		if n > 0 {
 			_, _ = m.emu.Write(buf[:n])
 			return OutputMsg{ID: m.id}
 		}
-
 		if err != nil {
-			// If there was an error we block and wait the proess to exit.
+			// If there was an error we block and wait the process to exit.
 			<-m.state.exited
 			return ClosedMsg{
 				ID:              m.id,
@@ -187,18 +195,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.ptyToTerminalView()
-
 	case OutputMsg:
 		if m.id != msg.ID {
 			return m, nil
 		}
-
 		if m.Closed() {
 			return m, nil
 		}
 
+		m.followScrollback()
 		return m, m.ptyToTerminalView()
-
 	case ClosedMsg:
 		if m.id != msg.ID {
 			return m, nil
@@ -206,33 +212,124 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 		m.markClosed()
 		return m, nil
-
 	case tea.KeyPressMsg:
-		if !m.Focused() {
-			return m, nil
-		}
-
-		if m.Closed() {
-			return m, nil
-		}
-
-		m.emu.SendKey(vt.KeyPressEvent(msg))
-		return m, nil
-
+		return m.handleKeyPressMsg(msg)
+	case tea.MouseMsg:
+		// Only works when mouse motion mode is enabled. See tea.MouseMode
+		return m.handleMouseMsg(msg)
 	case tea.PasteMsg:
 		if !m.Focused() {
 			return m, nil
 		}
-
 		if m.Closed() {
 			return m, nil
 		}
 
+		m.scrollTo(0)
 		m.emu.Paste(msg.Content)
 		return m, nil
 	}
 
 	return m, nil
+}
+
+func (m Model) handleKeyPressMsg(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	if !m.Focused() {
+		return m, nil
+	}
+	if m.Closed() {
+		return m, nil
+	}
+
+	// Page keys scroll the viewport instead of going to the shell, except
+	// on the alternate screen where pagers and editors need them.
+	if m.emu != nil && !m.emu.IsAltScreen() {
+		switch msg.String() {
+		case "shift+pgup":
+			m.scrollUp(m.height)
+			return m, nil
+		case "shift+pgdown":
+			m.scrollDown(m.height)
+			return m, nil
+		case "shift+up":
+			m.scrollUp(1)
+			return m, nil
+		case "shift+down":
+			m.scrollDown(1)
+			return m, nil
+		}
+	}
+
+	// Typing returns to the live screen, like a regular terminal does.
+	m.scrollTo(0)
+	// Prefer Text for printable characters (including Shift/CapsLock).
+	// x/vt SendKey only emits printable keys when Mod == 0, so Shift+a
+	// (Code:'a', Text:"A", Mod:Shift) would otherwise produce nothing.
+	if msg.Text != "" {
+		m.emu.SendText(msg.Text)
+	} else {
+		m.emu.SendKey(vt.KeyPressEvent(msg))
+	}
+	return m, nil
+}
+
+func (m Model) bufferY(screenY int) int {
+	if m.emu == nil {
+		return screenY
+	}
+	return screenY + m.emu.ScrollbackLen() - m.scrollOffset
+}
+
+func (m Model) handleMouseMsg(msg tea.MouseMsg) (Model, tea.Cmd) {
+	if !m.Focused() {
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	switch msg := msg.(type) {
+	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft {
+			m.pointerX, m.pointerY = msg.X, msg.Y
+			m.startX, m.startY = msg.X, m.bufferY(msg.Y)
+			m.endX, m.endY = msg.X, m.bufferY(msg.Y)
+			m.isSelecting = true
+		}
+	case tea.MouseMotionMsg:
+		if m.isSelecting && msg.Button == tea.MouseLeft {
+			m.pointerX, m.pointerY = msg.X, msg.Y
+			m.endX, m.endY = msg.X, m.bufferY(msg.Y)
+		}
+	case tea.MouseReleaseMsg:
+		if m.hasSelection() && msg.Button == tea.MouseLeft {
+			m.pointerX, m.pointerY = msg.X, msg.Y
+			m.endX, m.endY = msg.X, m.bufferY(msg.Y)
+			cmd = func() tea.Msg {
+				return TextSelectedMsg{ID: m.id, Text: m.selectedText()}
+			}
+		}
+		m.isSelecting = false
+	case tea.MouseWheelMsg:
+		// Requires the Bubble Tea view to set MouseMode (e.g. CellMotion).
+		// That also captures click/drag, so host text selection usually breaks.
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			m.scrollUp(mouseScrollStep)
+		case tea.MouseWheelDown:
+			m.scrollDown(mouseScrollStep)
+		}
+
+		if m.isSelecting {
+			x, y := msg.X, msg.Y
+			if x == 0 && y == 0 {
+				x, y = m.pointerX, m.pointerY
+			} else {
+				m.pointerX, m.pointerY = x, y
+			}
+			m.endX, m.endY = x, m.bufferY(y)
+		}
+	}
+
+	return m, cmd
 }
 
 func (m *Model) SetWidth(width int) {
@@ -257,15 +354,12 @@ func (m *Model) resize(width, height int) {
 	if m.emu == nil || m.pty == nil {
 		return
 	}
-
 	if m.Closed() {
 		return
 	}
-
 	if width < minWidth {
 		width = minWidth
 	}
-
 	if height < minHeight {
 		height = minHeight
 	}
@@ -273,6 +367,7 @@ func (m *Model) resize(width, height int) {
 	m.width, m.height = width, height
 	m.emu.Resize(width, height)
 	_ = m.pty.Resize(width, height)
+	m.followScrollback()
 }
 
 func (m Model) getDefaultSize() (width, height int) {
@@ -288,7 +383,12 @@ func (m Model) View() string {
 	if m.emu == nil {
 		return ""
 	}
-
+	if m.hasSelection() {
+		return m.viewWithSelection()
+	}
+	if m.scrollOffset > 0 {
+		return m.viewScrollback()
+	}
 	return m.emu.Render()
 }
 
@@ -310,17 +410,21 @@ func (m Model) Cursor() *tea.Cursor {
 	if m.Closed() {
 		return nil
 	}
-
 	if !m.Focused() {
 		return nil
 	}
-
 	if m.state == nil || !m.state.showCursor.Load() {
 		return nil
 	}
 
+	// Scrolling up pushes the live screen down and eventually off the viewport.
 	pos := m.emu.CursorPosition()
-	return tea.NewCursor(pos.X, pos.Y)
+	y := pos.Y + m.scrollOffset
+	if y >= m.height {
+		return nil
+	}
+
+	return tea.NewCursor(pos.X, y)
 }
 
 func (m Model) ID() int {
@@ -346,7 +450,6 @@ func (m *Model) Close() {
 	if m.Closed() {
 		return
 	}
-
 	if m.cmd != nil && m.cmd.Process != nil {
 		_ = m.cmd.Process.Kill()
 		if m.state != nil {
@@ -367,11 +470,9 @@ func (m *Model) markClosed() {
 	if m.Closed() {
 		return
 	}
-
 	if m.pty != nil {
 		_ = m.pty.Close()
 	}
-
 	if m.state != nil {
 		m.state.closed.Store(true)
 	}

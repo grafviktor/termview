@@ -29,4 +29,5 @@
 //   - readShell reads from the PTY and receives the shell output bytes.
 //   - A OutputMsg is created and sent back into Update.
 //   - The output is written to the emulator and rendered in Bubble Tea.
+
 package termview

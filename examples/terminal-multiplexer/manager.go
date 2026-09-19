@@ -137,7 +137,10 @@ func (m Manager) View() tea.View {
 	}
 
 	v.AltScreen = true
+	// Leave MouseMode off so the host keeps text selection. Wheel scroll needs
+	// MouseModeCellMotion, which blocks native select in many terminals.
 	v.Cursor = cursor
+	v.MouseMode = tea.MouseModeAllMotion
 	return v
 }
 

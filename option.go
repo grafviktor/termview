@@ -23,6 +23,12 @@ func WithInitialHeight(height int) Option {
 	}
 }
 
+func WithScrollbackSize(lines int) Option {
+	return func(tw *Model) {
+		tw.scrollbackSize = lines
+	}
+}
+
 func WithStdErr(stdErr io.Writer) Option {
 	return func(tw *Model) {
 		tw.stdErr = stdErr
