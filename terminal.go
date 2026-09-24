@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/term"
 	"github.com/charmbracelet/x/vt"
 	"github.com/charmbracelet/x/xpty"
@@ -309,6 +310,16 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (Model, tea.Cmd) {
 		}
 		m.isSelecting = false
 	case tea.MouseWheelMsg:
+		if m.emu.IsAltScreen() {
+			// Convert tea mouse → uv/vt mouse and send to the PTY child.
+			m.emu.SendMouse(uv.MouseWheelEvent{
+				X:      msg.X,
+				Y:      msg.Y,
+				Button: uv.MouseButton(msg.Button), // map if types differ
+				Mod:    uv.KeyMod(uv.MouseModeMotion),
+			})
+			return m, nil
+		}
 		// Requires the Bubble Tea view to set MouseMode (e.g. CellMotion).
 		// That also captures click/drag, so host text selection usually breaks.
 		switch msg.Button {
