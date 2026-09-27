@@ -192,10 +192,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.resize(msg.Width, msg.Height)
-		if m.Closed() {
-			return m, nil
-		}
-		return m, m.ptyToTerminalView()
+		return m, nil
 	case OutputMsg:
 		if m.id != msg.ID {
 			return m, nil
