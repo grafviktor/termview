@@ -258,6 +258,26 @@ func (m Model) handleKeyPressMsg(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		case "shift+down":
 			m.scrollDown(1)
 			return m, nil
+		case "pgup":
+			if m.isSelecting {
+				m.scrollUp(m.height)
+				return m, nil
+			}
+		case "pgdown":
+			if m.isSelecting {
+				m.scrollDown(m.height)
+				return m, nil
+			}
+		case "up":
+			if m.isSelecting {
+				m.scrollUp(1)
+				return m, nil
+			}
+		case "down":
+			if m.isSelecting {
+				m.scrollDown(1)
+				return m, nil
+			}
 		}
 	}
 
