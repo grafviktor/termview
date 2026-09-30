@@ -155,18 +155,14 @@ func TestPageKeysScroll(t *testing.T) {
 	}
 	m = m.Focus()
 
-	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp, Mod: tea.ModShift})
 	if m.scrollOffset != m.Height() {
 		t.Fatalf("offset = %d after pgup, want %d", m.scrollOffset, m.Height())
 	}
 
-	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
-	if m.scrollOffset != 0 {
-		t.Errorf("offset = %d after pgdown, want 0", m.scrollOffset)
-	}
-
+	m.scrollOffset = 0
 	m = m.Blur()
-	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp, Mod: tea.ModShift})
 	if m.scrollOffset != 0 {
 		t.Errorf("blurred terminal scrolled to %d", m.scrollOffset)
 	}

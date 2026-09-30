@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
 	"github.com/charmbracelet/x/vt"
 	"github.com/charmbracelet/x/xpty"
@@ -28,11 +30,12 @@ func nextID() int {
 }
 
 type session struct {
-	showCursor atomic.Bool
-	closed     atomic.Bool
-	exited     chan struct{}
-	exitCode   int
-	exitErr    error
+	showCursor    atomic.Bool
+	mouseTracking atomic.Uint32 // bitmask of enabled DEC mouse modes
+	closed        atomic.Bool
+	exited        chan struct{}
+	exitCode      int
+	exitErr       error
 }
 
 // Model embeds a shell in Bubble Tea using x/vt for emulation and xpty for the pseudo-terminal.
@@ -100,6 +103,16 @@ func New(opts ...Option) (Model, error) {
 	emu.SetCallbacks(vt.Callbacks{
 		CursorVisibility: func(visible bool) {
 			state.showCursor.Store(visible)
+		},
+		EnableMode: func(mode ansi.Mode) {
+			if bit := mouseTrackingBit(mode); bit != 0 {
+				state.mouseTracking.Or(bit)
+			}
+		},
+		DisableMode: func(mode ansi.Mode) {
+			if bit := mouseTrackingBit(mode); bit != 0 {
+				state.mouseTracking.And(^bit)
+			}
 		},
 	})
 
@@ -191,10 +204,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.resize(msg.Width, msg.Height)
-		if m.Closed() {
-			return m, nil
-		}
-		return m, m.ptyToTerminalView()
+		return m, nil
 	case OutputMsg:
 		if m.id != msg.ID {
 			return m, nil
@@ -257,6 +267,26 @@ func (m Model) handleKeyPressMsg(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		case "shift+down":
 			m.scrollDown(1)
 			return m, nil
+		case "pgup":
+			if m.isSelecting {
+				m.scrollUp(m.height)
+				return m, nil
+			}
+		case "pgdown":
+			if m.isSelecting {
+				m.scrollDown(m.height)
+				return m, nil
+			}
+		case "up":
+			if m.isSelecting {
+				m.scrollUp(1)
+				return m, nil
+			}
+		case "down":
+			if m.isSelecting {
+				m.scrollDown(1)
+				return m, nil
+			}
 		}
 	}
 
@@ -278,6 +308,48 @@ func (m Model) bufferY(screenY int) int {
 		return screenY
 	}
 	return screenY + m.emu.ScrollbackLen() - m.scrollOffset
+}
+
+// mouseTrackingBit maps DEC mouse-tracking modes to bits in session.mouseTracking.
+// SendMouse only emits sequences when at least one of these modes is set.
+func mouseTrackingBit(mode ansi.Mode) uint32 {
+	switch mode {
+	case ansi.ModeMouseX10:
+		return 1 << 0
+	case ansi.ModeMouseNormal:
+		return 1 << 1
+	case ansi.ModeMouseHighlight:
+		return 1 << 2
+	case ansi.ModeMouseButtonEvent:
+		return 1 << 3
+	case ansi.ModeMouseAnyEvent:
+		return 1 << 4
+	default:
+		return 0
+	}
+}
+
+// forwardAltScreenWheel sends the wheel to the child. When the child has enabled
+// DEC mouse tracking, emit a mouse sequence; otherwise fall back to cursor keys
+// (xterm-style) so pagers like less still scroll.
+func (m Model) forwardAltScreenWheel(msg tea.MouseWheelMsg) {
+	if m.state != nil && m.state.mouseTracking.Load() != 0 {
+		m.emu.SendMouse(uv.MouseWheelEvent{
+			X:      msg.X,
+			Y:      msg.Y,
+			Button: msg.Button,
+			Mod:    msg.Mod,
+		})
+		return
+	}
+
+	code := uv.KeyDown
+	if msg.Button == tea.MouseWheelUp {
+		code = uv.KeyUp
+	}
+	for range mouseScrollStep {
+		m.emu.SendKey(uv.KeyPressEvent{Code: code})
+	}
 }
 
 func (m Model) handleMouseMsg(msg tea.MouseMsg) (Model, tea.Cmd) {
@@ -309,6 +381,10 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (Model, tea.Cmd) {
 		}
 		m.isSelecting = false
 	case tea.MouseWheelMsg:
+		if m.emu != nil && m.emu.IsAltScreen() {
+			m.forwardAltScreenWheel(msg)
+			return m, nil
+		}
 		// Requires the Bubble Tea view to set MouseMode (e.g. CellMotion).
 		// That also captures click/drag, so host text selection usually breaks.
 		switch msg.Button {
