@@ -370,6 +370,14 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (Model, tea.Cmd) {
 		if m.isSelecting && msg.Button == tea.MouseLeft {
 			m.pointerX, m.pointerY = msg.X, msg.Y
 			m.endX, m.endY = msg.X, m.bufferY(msg.Y)
+
+			if m.pointerY == 0 {
+				m.scrollUp(mouseScrollStep)
+				m.endY = m.bufferY(msg.Y)
+			} else if m.pointerY == m.height-1 {
+				m.scrollDown(mouseScrollStep)
+				m.endY = m.bufferY(msg.Y)
+			}
 		}
 	case tea.MouseReleaseMsg:
 		if m.hasSelection() && msg.Button == tea.MouseLeft {
