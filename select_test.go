@@ -54,3 +54,33 @@ func TestWheelWithoutCoordsKeepsPointer(t *testing.T) {
 		t.Errorf("end = (%d,%d), want (4,%d) from last pointer after scroll", m.endX, m.endY, wantY)
 	}
 }
+
+func TestKeyboardScrollExtendsSelection(t *testing.T) {
+	m := newTestModel(20, 5)
+	for i := 1; i <= 12; i++ {
+		fmt.Fprintf(m.emu, "line%d\r\n", i)
+	}
+	m = m.Focus()
+
+	m, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 4, Y: 3})
+	m, _ = m.Update(tea.MouseMotionMsg{Button: tea.MouseLeft, X: 5, Y: 3})
+	endBefore := m.endY
+
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	if m.scrollOffset != 1 {
+		t.Fatalf("offset = %d after up while selecting, want 1", m.scrollOffset)
+	}
+	wantY := m.bufferY(3)
+	if m.endY != wantY {
+		t.Fatalf("endY = %d after up, want %d (pointer row in new viewport)", m.endY, wantY)
+	}
+	if m.endY >= endBefore {
+		t.Errorf("endY should move into older scrollback: before %d, after %d", endBefore, m.endY)
+	}
+
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
+	wantY = m.bufferY(3)
+	if m.endY != wantY {
+		t.Errorf("endY = %d after pgup, want %d", m.endY, wantY)
+	}
+}

@@ -257,34 +257,42 @@ func (m Model) handleKeyPressMsg(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		switch msg.String() {
 		case "shift+pgup":
 			m.scrollUp(m.height)
+			m.extendSelectionToPointer()
 			return m, nil
 		case "shift+pgdown":
 			m.scrollDown(m.height)
+			m.extendSelectionToPointer()
 			return m, nil
 		case "shift+up":
 			m.scrollUp(1)
+			m.extendSelectionToPointer()
 			return m, nil
 		case "shift+down":
 			m.scrollDown(1)
+			m.extendSelectionToPointer()
 			return m, nil
 		case "pgup":
 			if m.isSelecting {
 				m.scrollUp(m.height)
+				m.extendSelectionToPointer()
 				return m, nil
 			}
 		case "pgdown":
 			if m.isSelecting {
 				m.scrollDown(m.height)
+				m.extendSelectionToPointer()
 				return m, nil
 			}
 		case "up":
 			if m.isSelecting {
 				m.scrollUp(1)
+				m.extendSelectionToPointer()
 				return m, nil
 			}
 		case "down":
 			if m.isSelecting {
 				m.scrollDown(1)
+				m.extendSelectionToPointer()
 				return m, nil
 			}
 		}
@@ -308,6 +316,16 @@ func (m Model) bufferY(screenY int) int {
 		return screenY
 	}
 	return screenY + m.emu.ScrollbackLen() - m.scrollOffset
+}
+
+// extendSelectionToPointer moves the selection end to the cell under the
+// last pointer position. Call after scrolling so the selection grows with
+// the viewport (keyboard, wheel, or edge auto-scroll).
+func (m *Model) extendSelectionToPointer() {
+	if !m.isSelecting {
+		return
+	}
+	m.endX, m.endY = m.pointerX, m.bufferY(m.pointerY)
 }
 
 // mouseTrackingBit maps DEC mouse-tracking modes to bits in session.mouseTracking.
@@ -373,10 +391,10 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (Model, tea.Cmd) {
 
 			if m.pointerY == 0 {
 				m.scrollUp(mouseScrollStep)
-				m.endY = m.bufferY(msg.Y)
+				m.extendSelectionToPointer()
 			} else if m.pointerY == m.height-1 {
 				m.scrollDown(mouseScrollStep)
-				m.endY = m.bufferY(msg.Y)
+				m.extendSelectionToPointer()
 			}
 		}
 	case tea.MouseReleaseMsg:
@@ -403,13 +421,10 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (Model, tea.Cmd) {
 		}
 
 		if m.isSelecting {
-			x, y := msg.X, msg.Y
-			if x == 0 && y == 0 {
-				x, y = m.pointerX, m.pointerY
-			} else {
-				m.pointerX, m.pointerY = x, y
+			if msg.X != 0 || msg.Y != 0 {
+				m.pointerX, m.pointerY = msg.X, msg.Y
 			}
-			m.endX, m.endY = x, m.bufferY(y)
+			m.extendSelectionToPointer()
 		}
 	}
 
