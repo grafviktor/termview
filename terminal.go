@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"sync/atomic"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
@@ -17,10 +18,11 @@ import (
 )
 
 const (
-	minHeight     = 5
-	minWidth      = 5
-	defaultHeight = 24
-	defaultWidth  = 80
+	minHeight           = 5
+	minWidth            = 5
+	defaultHeight       = 24
+	defaultWidth        = 80
+	scrollTimerInterval = 100 * time.Millisecond
 )
 
 var lastID atomic.Int64
@@ -51,10 +53,11 @@ type Model struct {
 	commandArgs   []string
 	focus         bool
 	stdErr        io.Writer
-	// Scrollback.
-	scrollbackSize    int
-	scrollOffset      int
-	lastScrollbackLen int
+	// Scrolling
+	scrollbackSize        int
+	scrollOffset          int
+	lastScrollbackLen     int
+	scrollTimerInProgress bool
 	// Selection
 	isSelecting                bool
 	startX, startY, endX, endY int
@@ -201,6 +204,7 @@ func (m Model) ptyToTerminalView() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
+	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.resize(msg.Width, msg.Height)
@@ -238,9 +242,28 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.scrollTo(0)
 		m.emu.Paste(msg.Content)
 		return m, nil
+	case selectionEdgeScrollMsg:
+		m.scrollTimerInProgress = false
+
+		// If the pointer is still at the scren edge, then scroll.
+		if msg.currentPositionY == m.pointerY && m.isSelecting {
+			if m.pointerY == 0 {
+				m.scrollUp(mouseScrollStep)
+			} else if m.pointerY == m.height-1 {
+				m.scrollDown(mouseScrollStep)
+			}
+
+			m.extendSelectionToPointer()
+
+			// If user still holds the mouse at the same edge of the screen.
+			if m.mouseAtTheEdge(m.pointerY) {
+				// Then continue to emit scroll events.
+				cmd = m.scrollBeyondTheEdge(msg.currentPositionY)
+			}
+		}
 	}
 
-	return m, nil
+	return m, cmd
 }
 
 func (m Model) handleKeyPressMsg(msg tea.KeyPressMsg) (Model, tea.Cmd) {
@@ -387,14 +410,10 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (Model, tea.Cmd) {
 	case tea.MouseMotionMsg:
 		if m.isSelecting && msg.Button == tea.MouseLeft {
 			m.pointerX, m.pointerY = msg.X, msg.Y
-			m.endX, m.endY = msg.X, m.bufferY(msg.Y)
+			m.extendSelectionToPointer()
 
-			if m.pointerY == 0 {
-				m.scrollUp(mouseScrollStep)
-				m.extendSelectionToPointer()
-			} else if m.pointerY == m.height-1 {
-				m.scrollDown(mouseScrollStep)
-				m.extendSelectionToPointer()
+			if m.mouseAtTheEdge(m.pointerY) {
+				cmd = m.scrollBeyondTheEdge(msg.Y)
 			}
 		}
 	case tea.MouseReleaseMsg:
@@ -405,6 +424,8 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (Model, tea.Cmd) {
 				return TextSelectedMsg{ID: m.id, Text: m.selectedText()}
 			}
 		}
+
+		m.scrollTimerInProgress = false
 		m.isSelecting = false
 	case tea.MouseWheelMsg:
 		if m.emu != nil && m.emu.IsAltScreen() {
@@ -429,6 +450,27 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (Model, tea.Cmd) {
 	}
 
 	return m, cmd
+}
+
+func (m *Model) scrollBeyondTheEdge(positionY int) tea.Cmd {
+	if m.scrollTimerInProgress {
+		return nil
+	}
+
+	var cmd tea.Cmd
+
+	if m.isSelecting {
+		m.scrollTimerInProgress = true
+		cmd = tea.Tick(scrollTimerInterval, func(time.Time) tea.Msg {
+			return selectionEdgeScrollMsg{currentPositionY: positionY}
+		})
+	}
+
+	return cmd
+}
+
+func (m *Model) mouseAtTheEdge(positionY int) bool {
+	return positionY == 0 || positionY == m.height-1
 }
 
 func (m *Model) SetWidth(width int) {

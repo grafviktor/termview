@@ -12,4 +12,7 @@ type (
 		ID   int
 		Text string
 	}
+	selectionEdgeScrollMsg struct {
+		currentPositionY int
+	}
 )
