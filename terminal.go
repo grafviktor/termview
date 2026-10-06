@@ -370,27 +370,18 @@ func mouseTrackingBit(mode ansi.Mode) uint32 {
 	}
 }
 
-// forwardAltScreenWheel sends the wheel to the child. When the child has enabled
-// DEC mouse tracking, emit a mouse sequence; otherwise fall back to cursor keys
-// (xterm-style) so pagers like less still scroll.
+// forwardAltScreenWheel forwards the wheel only when the child has enabled DEC mouse tracking.
 func (m Model) forwardAltScreenWheel(msg tea.MouseWheelMsg) {
-	if m.state != nil && m.state.mouseTracking.Load() != 0 {
-		m.emu.SendMouse(uv.MouseWheelEvent{
-			X:      msg.X,
-			Y:      msg.Y,
-			Button: msg.Button,
-			Mod:    msg.Mod,
-		})
+	if m.state == nil || m.state.mouseTracking.Load() == 0 {
 		return
 	}
 
-	code := uv.KeyDown
-	if msg.Button == tea.MouseWheelUp {
-		code = uv.KeyUp
-	}
-	for range mouseScrollStep {
-		m.emu.SendKey(uv.KeyPressEvent{Code: code})
-	}
+	m.emu.SendMouse(uv.MouseWheelEvent{
+		X:      msg.X,
+		Y:      msg.Y,
+		Button: msg.Button,
+		Mod:    msg.Mod,
+	})
 }
 
 func (m Model) handleMouseMsg(msg tea.MouseMsg) (Model, tea.Cmd) {
